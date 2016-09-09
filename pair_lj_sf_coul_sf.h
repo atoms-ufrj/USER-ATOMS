@@ -69,7 +69,7 @@ E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
 
-E: Pair style lj/cut/coul/dsf requires atom attribute q
+E: Pair style lj/sf/coul/sf requires atom attribute q
 
 The atom style defined does not have these attributes.
 
