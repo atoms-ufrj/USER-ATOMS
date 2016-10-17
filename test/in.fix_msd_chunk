@@ -1,0 +1,48 @@
+# Definition of base for file names:
+variable	name string propane
+variable	delta_t equal 2.0
+variable	nequil equal 100
+variable	nprod  equal 1000
+variable	nthermo equal 50
+variable	Temp equal 193.0
+variable	Rc equal 14.0
+variable	skin equal 2.0
+variable	seed equal 3458
+
+# Basic commands:
+units		real
+atom_style	full
+
+# Models:
+pair_style	lj/sf/coul/sf ${Rc}
+pair_modify	mix arithmetic
+bond_style	harmonic
+angle_style	harmonic
+
+# Read initial configuration:
+read_data	${name}.lmp
+
+# Initial velocities:
+velocity	all create ${Temp} ${seed}
+
+# Neighbor list parameters:
+neighbor	${skin} bin
+neigh_modify	delay 0 every 1 check yes
+
+# Dynamics:
+fix		nve all nve
+timestep	${delta_t}
+
+thermo		${nthermo}
+thermo_style	custom step temp ke pe etotal press
+
+# Equilibration:
+run		${nequil}
+
+# Production:
+compute		mols all chunk/atom molecule
+fix		msd all msd/chunk mols 10 5 test.txt 100
+#fix		save all ave/time ${nprod} 1 ${nprod} f_msd[*] file ${name}.msd mode vector
+thermo_style	custom step temp ke pe etotal press f_msd[1][1] f_msd[1][2] f_msd[1][3] f_msd[1][4]
+run		${nprod}
+

@@ -13,6 +13,8 @@
 
 /* ----------------------------------------------------------------------
    Contributing author: Charlles Abreu (abreu@eq.ufrj.br)
+                        Applied Thermodynamics & Molecular Simulation (ATOMS)
+                        Federal University of Rio de Janeiro / Brazil
 ------------------------------------------------------------------------- */
 
 #include "math.h"

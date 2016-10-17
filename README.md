@@ -19,7 +19,7 @@ USER-ATOMS is a LAMMPS user package developed at ATOMS/UFRJ
 --------------------------------------------------------------------------------
 # Included features
 
-### 1) Pair Style lj/sf/coul/sf
+### 1) Pair style lj/sf/coul/sf
 
 __Syntax__:
 
@@ -39,10 +39,10 @@ __Examples__:
 
 __Description__:
 
-The pair style _lj/sf/coul/sf_ computes the shifted-force version of a combined Lennard-Jones/Coulombic
-pair potential.
+The pair style _lj/sf/coul/sf_ computes the shifted-force version of a combined
+Lennard-Jones/Coulombic pair potential.
 
-### 2) Compute Style ke/com
+### 2) Compute style ke/com
 
 __Syntax__:
 
@@ -53,12 +53,38 @@ __Syntax__:
 __Example__:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    compute KEcom all ke/com
+    compute KinEngCoM all ke/com
+    thermo_style custom step temp pe ke c_KinEngCoM
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 __Description__:
 
-The compute style _ke/com_ computes the translational part (that is, based on the center-of-mass
-velocities) of the kinetic energy. The center of mass of each molecule is computed considering
-only those atoms that belong to the specified group.
+The compute style _ke/com_ computes the translational part (that is, based on
+the center-of-mass velocities) of the kinetic energy. The center of mass of each
+molecule is computed considering only those atoms that belong to the specified
+group.
+
+### 3) Fix style msd/chunk
+
+__Syntax__:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    fix ID group msd/chunk chunkID nEvery blockSize file nUpdate
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* chunkID = 
+* nEvery = 
+* blockSize = 
+* file = 
+* nUpdate = 
+
+__Example__:
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    compute mols all chunk/atom molecule
+    fix     msd all msd/chunk mols 20 10 msd.dat 10000
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+__Description__:
+
 
