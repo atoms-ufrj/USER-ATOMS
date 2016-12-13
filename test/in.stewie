@@ -6,8 +6,8 @@ atom_style      full
 
 bond_style      harmonic
 angle_style     harmonic
-pair_style      lj/cut/coul/long/stewie 10.0
 kspace_style    pppm 0.0001
+pair_style      lj/cut/coul/long/stewie 10.0
 
 read_data       water.lmp
 pair_modify	mix arithmetic
@@ -24,5 +24,5 @@ neigh_modify    delay 0 every 1 check yes
 thermo_style    custom step temp evdwl etail emol elong ecoul pe
 thermo_modify	norm no
 thermo          100
-run             100
+run             300
 

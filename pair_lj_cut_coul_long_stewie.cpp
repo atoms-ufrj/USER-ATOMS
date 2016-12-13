@@ -77,6 +77,15 @@ PairLJCutCoulLongStewie::~PairLJCutCoulLongStewie()
   if (ftable) free_tables();
 }
 
+
+/* ---------------------------------------------------------------------- */
+
+void PairLJCutCoulLongStewie::setup()
+{
+  printf("===> STEWIE SETUP\n");
+  force->kspace->setup();
+}
+
 /* ---------------------------------------------------------------------- */
 
 void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
@@ -202,6 +211,8 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
+
+  if (kspace_compute_flag) force->kspace->compute(eflag,vflag);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -611,6 +622,16 @@ void PairLJCutCoulLongStewie::settings(int narg, char **arg)
       for (j = i+1; j <= atom->ntypes; j++)
         if (setflag[i][j]) cut_lj[i][j] = cut_lj_global;
   }
+
+  // Check if kspace has already been defined:
+  if (force->kspace == NULL)
+    error->all(FLERR,"Pair_style lj/cut/coul/long/stewie requires previous kspace definition");
+
+  // Grab kspace compute_flag status and make it externally appear as disabled:
+  kspace_compute_flag = force->kspace->compute_flag;
+  force->kspace->compute_flag = 0;
+
+  printf("===> STEWIE SETTINGS\n");
 }
 
 /* ----------------------------------------------------------------------
@@ -710,6 +731,8 @@ void PairLJCutCoulLongStewie::init_style()
   // setup force tables
 
   if (ncoultablebits) init_tables(cut_coul,cut_respa);
+
+  printf("===> STEWIE INIT\n");
 }
 
 /* ----------------------------------------------------------------------
