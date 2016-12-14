@@ -50,7 +50,6 @@ using namespace MathConst;
 PairLJCutCoulLongStewie::PairLJCutCoulLongStewie(LAMMPS *lmp) : Pair(lmp)
 {
   ewaldflag = pppmflag = 1;
-  respa_enable = 1;
   writedata = 1;
   ftable = NULL;
   qdist = 0.0;
@@ -73,6 +72,8 @@ PairLJCutCoulLongStewie::~PairLJCutCoulLongStewie()
     memory->destroy(lj3);
     memory->destroy(lj4);
     memory->destroy(offset);
+
+    memory->destroy(fvdw);
   }
   if (ftable) free_tables();
 }
@@ -99,8 +100,7 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
   double rsq;
 
   evdwl = ecoul = 0.0;
-  if (eflag || vflag) ev_setup(eflag,vflag);
-  else evflag = vflag_fdotr = 0;
+  ev_setup(MAX(1,eflag),vflag);
 
   double **x = atom->x;
   double **f = atom->f;
@@ -116,6 +116,15 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
   ilist = list->ilist;
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
+
+  // Zero van der Waals forces:
+  int ntotal = nlocal;
+  if (force->newton) ntotal += atom->nghost;
+  if (ntotal > nmax) {
+    nmax = ntotal;
+    memory->grow(fvdw,nmax,3,"pair:fvdw");
+  }
+  memset(&fvdw[0][0],0,nmax*3*sizeof(double));
 
   // loop over neighbors of my atoms
 
@@ -175,34 +184,44 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
           forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
         } else forcelj = 0.0;
 
-        fpair = (forcecoul + factor_lj*forcelj) * r2inv;
+        // Compute van der Waals and Coulomb contributions separately:
+        forcelj *= factor_lj*r2inv;
+        forcecoul *= r2inv;
 
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
+        fvdw[i][0] += delx*forcelj;
+        fvdw[i][1] += dely*forcelj;
+        fvdw[i][2] += delz*forcelj;
+        f[i][0] += delx*forcecoul;
+        f[i][1] += dely*forcecoul;
+        f[i][2] += delz*forcecoul;
+
         if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
+          fvdw[j][0] -= delx*forcelj;
+          fvdw[j][1] -= dely*forcelj;
+          fvdw[j][2] -= delz*forcelj;
+          f[j][0] -= delx*forcecoul;
+          f[j][1] -= dely*forcecoul;
+          f[j][2] -= delz*forcecoul;
         }
 
-        if (eflag) {
-          if (rsq < cut_coulsq) {
-            if (!ncoultablebits || rsq <= tabinnersq)
-              ecoul = prefactor*erfc;
-            else {
-              table = etable[itable] + fraction*detable[itable];
-              ecoul = qtmp*q[j] * table;
-            }
-            if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
-          } else ecoul = 0.0;
+        // Combine:
+        fpair = forcelj + forcecoul;
 
-          if (rsq < cut_ljsq[itype][jtype]) {
-            evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
-              offset[itype][jtype];
-            evdwl *= factor_lj;
-          } else evdwl = 0.0;
-        }
+        if (rsq < cut_coulsq) {
+          if (!ncoultablebits || rsq <= tabinnersq)
+            ecoul = prefactor*erfc;
+          else {
+            table = etable[itable] + fraction*detable[itable];
+            ecoul = qtmp*q[j] * table;
+          }
+          if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
+        } else ecoul = 0.0;
+
+        if (rsq < cut_ljsq[itype][jtype]) {
+          evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
+            offset[itype][jtype];
+          evdwl *= factor_lj;
+        } else evdwl = 0.0;
 
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
                              evdwl,ecoul,fpair,delx,dely,delz);
@@ -212,366 +231,42 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
 
   if (vflag_fdotr) virial_fdotr_compute();
 
-  if (kspace_compute_flag) force->kspace->compute(eflag,vflag);
-}
+  // Compute (short + long) Coulombic energy of whole system:
+  double one = force->pair->eng_coul;
+  MPI_Allreduce(&one,&ecoul,1,MPI_DOUBLE,MPI_SUM,world);
 
-/* ---------------------------------------------------------------------- */
-
-void PairLJCutCoulLongStewie::compute_inner()
-{
-  int i,j,ii,jj,inum,jnum,itype,jtype;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,fpair;
-  double rsq,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double rsw;
-  int *ilist,*jlist,*numneigh,**firstneigh;
-
-  double **x = atom->x;
-  double **f = atom->f;
-  double *q = atom->q;
-  int *type = atom->type;
-  int nlocal = atom->nlocal;
-  double *special_coul = force->special_coul;
-  double *special_lj = force->special_lj;
-  int newton_pair = force->newton_pair;
-  double qqrd2e = force->qqrd2e;
-
-  inum = listinner->inum;
-  ilist = listinner->ilist;
-  numneigh = listinner->numneigh;
-  firstneigh = listinner->firstneigh;
-
-  double cut_out_on = cut_respa[0];
-  double cut_out_off = cut_respa[1];
-
-  double cut_out_diff = cut_out_off - cut_out_on;
-  double cut_out_on_sq = cut_out_on*cut_out_on;
-  double cut_out_off_sq = cut_out_off*cut_out_off;
-
-  // loop over neighbors of my atoms
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    qtmp = q[i];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      factor_coul = special_coul[sbmask(j)];
-      j &= NEIGHMASK;
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-
-      if (rsq < cut_out_off_sq) {
-        r2inv = 1.0/rsq;
-        forcecoul = qqrd2e * qtmp*q[j]*sqrt(r2inv);
-        if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*forcecoul;
-
-        jtype = type[j];
-        if (rsq < cut_ljsq[itype][jtype]) {
-          r6inv = r2inv*r2inv*r2inv;
-          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-        } else forcelj = 0.0;
-
-        fpair = (forcecoul + factor_lj*forcelj) * r2inv;
-        if (rsq > cut_out_on_sq) {
-          rsw = (sqrt(rsq) - cut_out_on)/cut_out_diff;
-          fpair  *= 1.0 + rsw*rsw*(2.0*rsw-3.0);
-        }
-
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
-        }
-      }
-    }
+  // Compute long-range Coulombic forces and energy:
+  if (kspace_compute_flag) {
+    force->kspace->compute(MAX(1,eflag),vflag);
+    ecoul += force->kspace->energy;
   }
-}
 
-/* ---------------------------------------------------------------------- */
-
-void PairLJCutCoulLongStewie::compute_middle()
-{
-  int i,j,ii,jj,inum,jnum,itype,jtype;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,fpair;
-  double rsq,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double rsw;
-  int *ilist,*jlist,*numneigh,**firstneigh;
-
-  double **x = atom->x;
-  double **f = atom->f;
-  double *q = atom->q;
-  int *type = atom->type;
-  int nlocal = atom->nlocal;
-  double *special_coul = force->special_coul;
-  double *special_lj = force->special_lj;
-  int newton_pair = force->newton_pair;
-  double qqrd2e = force->qqrd2e;
-
-  inum = listmiddle->inum;
-  ilist = listmiddle->ilist;
-  numneigh = listmiddle->numneigh;
-  firstneigh = listmiddle->firstneigh;
-
-  double cut_in_off = cut_respa[0];
-  double cut_in_on = cut_respa[1];
-  double cut_out_on = cut_respa[2];
-  double cut_out_off = cut_respa[3];
-
-  double cut_in_diff = cut_in_on - cut_in_off;
-  double cut_out_diff = cut_out_off - cut_out_on;
-  double cut_in_off_sq = cut_in_off*cut_in_off;
-  double cut_in_on_sq = cut_in_on*cut_in_on;
-  double cut_out_on_sq = cut_out_on*cut_out_on;
-  double cut_out_off_sq = cut_out_off*cut_out_off;
-
-  // loop over neighbors of my atoms
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    qtmp = q[i];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      factor_coul = special_coul[sbmask(j)];
-      j &= NEIGHMASK;
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-
-      if (rsq < cut_out_off_sq && rsq > cut_in_off_sq) {
-        r2inv = 1.0/rsq;
-        forcecoul = qqrd2e * qtmp*q[j]*sqrt(r2inv);
-        if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*forcecoul;
-
-        jtype = type[j];
-        if (rsq < cut_ljsq[itype][jtype]) {
-          r6inv = r2inv*r2inv*r2inv;
-          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-        } else forcelj = 0.0;
-
-        fpair = (forcecoul + factor_lj*forcelj) * r2inv;
-        if (rsq < cut_in_on_sq) {
-          rsw = (sqrt(rsq) - cut_in_off)/cut_in_diff;
-          fpair *= rsw*rsw*(3.0 - 2.0*rsw);
-        }
-        if (rsq > cut_out_on_sq) {
-          rsw = (sqrt(rsq) - cut_out_on)/cut_out_diff;
-          fpair *= 1.0 + rsw*rsw*(2.0*rsw - 3.0);
-        }
-
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
-        }
-      }
-    }
+  // Compute exponents:
+  double exponent[nodes], max_exp;
+  max_exp = exponent[0] = minus_beta*lambda[0]*ecoul + weight[0];
+  for (int i = 1; i < nodes; i++) {
+    exponent[i] = minus_beta*lambda[i]*ecoul + weight[i];
+    if (exponent[i] > max_exp)
+      max_exp = exponent[i];
   }
-}
 
-/* ---------------------------------------------------------------------- */
+  // Compute probabilities and average lambda:
+  double pi, sum_pi, sum_lambda_pi;
+  sum_pi = sum_lambda_pi = 0.0;
+  for (int i = 0; i < nodes; i++) {
+    pi = exp(exponent[i] - max_exp);
+    sum_pi += pi;
+    sum_lambda_pi += lambda[i]*pi;
+  }
+  double avg_lambda = sum_lambda_pi/sum_pi;
 
-void PairLJCutCoulLongStewie::compute_outer(int eflag, int vflag)
-{
-  int i,j,ii,jj,inum,jnum,itype,jtype,itable;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
-  double fraction,table;
-  double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
-  double grij,expm2,prefactor,t,erfc;
-  double rsw;
-  int *ilist,*jlist,*numneigh,**firstneigh;
-  double rsq;
+//  printf("avg_lambda = %f\n",avg_lambda);
 
-  evdwl = ecoul = 0.0;
-  if (eflag || vflag) ev_setup(eflag,vflag);
-  else evflag = 0;
-
-  double **x = atom->x;
-  double **f = atom->f;
-  double *q = atom->q;
-  int *type = atom->type;
-  int nlocal = atom->nlocal;
-  double *special_coul = force->special_coul;
-  double *special_lj = force->special_lj;
-  int newton_pair = force->newton_pair;
-  double qqrd2e = force->qqrd2e;
-
-  inum = listouter->inum;
-  ilist = listouter->ilist;
-  numneigh = listouter->numneigh;
-  firstneigh = listouter->firstneigh;
-
-  double cut_in_off = cut_respa[2];
-  double cut_in_on = cut_respa[3];
-
-  double cut_in_diff = cut_in_on - cut_in_off;
-  double cut_in_off_sq = cut_in_off*cut_in_off;
-  double cut_in_on_sq = cut_in_on*cut_in_on;
-
-  // loop over neighbors of my atoms
-
-  for (ii = 0; ii < inum; ii++) {
-    i = ilist[ii];
-    qtmp = q[i];
-    xtmp = x[i][0];
-    ytmp = x[i][1];
-    ztmp = x[i][2];
-    itype = type[i];
-    jlist = firstneigh[i];
-    jnum = numneigh[i];
-
-    for (jj = 0; jj < jnum; jj++) {
-      j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      factor_coul = special_coul[sbmask(j)];
-      j &= NEIGHMASK;
-
-      delx = xtmp - x[j][0];
-      dely = ytmp - x[j][1];
-      delz = ztmp - x[j][2];
-      rsq = delx*delx + dely*dely + delz*delz;
-      jtype = type[j];
-
-      if (rsq < cutsq[itype][jtype]) {
-        r2inv = 1.0/rsq;
-
-        if (rsq < cut_coulsq) {
-          if (!ncoultablebits || rsq <= tabinnersq) {
-            r = sqrt(rsq);
-            grij = g_ewald * r;
-            expm2 = exp(-grij*grij);
-            t = 1.0 / (1.0 + EWALD_P*grij);
-            erfc = t * (A1+t*(A2+t*(A3+t*(A4+t*A5)))) * expm2;
-            prefactor = qqrd2e * qtmp*q[j]/r;
-            forcecoul = prefactor * (erfc + EWALD_F*grij*expm2 - 1.0);
-            if (rsq > cut_in_off_sq) {
-              if (rsq < cut_in_on_sq) {
-                rsw = (r - cut_in_off)/cut_in_diff;
-                forcecoul += prefactor*rsw*rsw*(3.0 - 2.0*rsw);
-                if (factor_coul < 1.0)
-                  forcecoul -=
-                    (1.0-factor_coul)*prefactor*rsw*rsw*(3.0 - 2.0*rsw);
-              } else {
-                forcecoul += prefactor;
-                if (factor_coul < 1.0)
-                  forcecoul -= (1.0-factor_coul)*prefactor;
-              }
-            }
-          } else {
-            union_int_float_t rsq_lookup;
-            rsq_lookup.f = rsq;
-            itable = rsq_lookup.i & ncoulmask;
-            itable >>= ncoulshiftbits;
-            fraction = (rsq_lookup.f - rtable[itable]) * drtable[itable];
-            table = ftable[itable] + fraction*dftable[itable];
-            forcecoul = qtmp*q[j] * table;
-            if (factor_coul < 1.0) {
-              table = ctable[itable] + fraction*dctable[itable];
-              prefactor = qtmp*q[j] * table;
-              forcecoul -= (1.0-factor_coul)*prefactor;
-            }
-          }
-        } else forcecoul = 0.0;
-
-        if (rsq < cut_ljsq[itype][jtype] && rsq > cut_in_off_sq) {
-          r6inv = r2inv*r2inv*r2inv;
-          forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-          if (rsq < cut_in_on_sq) {
-            rsw = (sqrt(rsq) - cut_in_off)/cut_in_diff;
-            forcelj *= rsw*rsw*(3.0 - 2.0*rsw);
-          }
-        } else forcelj = 0.0;
-
-        fpair = (forcecoul + forcelj) * r2inv;
-
-        f[i][0] += delx*fpair;
-        f[i][1] += dely*fpair;
-        f[i][2] += delz*fpair;
-        if (newton_pair || j < nlocal) {
-          f[j][0] -= delx*fpair;
-          f[j][1] -= dely*fpair;
-          f[j][2] -= delz*fpair;
-        }
-
-        if (eflag) {
-          if (rsq < cut_coulsq) {
-            if (!ncoultablebits || rsq <= tabinnersq) {
-              ecoul = prefactor*erfc;
-              if (factor_coul < 1.0) ecoul -= (1.0-factor_coul)*prefactor;
-            } else {
-              table = etable[itable] + fraction*detable[itable];
-              ecoul = qtmp*q[j] * table;
-              if (factor_coul < 1.0) {
-                table = ptable[itable] + fraction*dptable[itable];
-                prefactor = qtmp*q[j] * table;
-                ecoul -= (1.0-factor_coul)*prefactor;
-              }
-            }
-          } else ecoul = 0.0;
-
-          if (rsq < cut_ljsq[itype][jtype]) {
-            r6inv = r2inv*r2inv*r2inv;
-            evdwl = r6inv*(lj3[itype][jtype]*r6inv-lj4[itype][jtype]) -
-              offset[itype][jtype];
-            evdwl *= factor_lj;
-          } else evdwl = 0.0;
-        }
-
-        if (vflag) {
-          if (rsq < cut_coulsq) {
-            if (!ncoultablebits || rsq <= tabinnersq) {
-              forcecoul = prefactor * (erfc + EWALD_F*grij*expm2);
-              if (factor_coul < 1.0) forcecoul -= (1.0-factor_coul)*prefactor;
-            } else {
-              table = vtable[itable] + fraction*dvtable[itable];
-              forcecoul = qtmp*q[j] * table;
-              if (factor_coul < 1.0) {
-                table = ptable[itable] + fraction*dptable[itable];
-                prefactor = qtmp*q[j] * table;
-                forcecoul -= (1.0-factor_coul)*prefactor;
-              }
-            }
-          } else forcecoul = 0.0;
-
-          if (rsq <= cut_in_off_sq) {
-            r6inv = r2inv*r2inv*r2inv;
-            forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-          } else if (rsq <= cut_in_on_sq) {
-            r6inv = r2inv*r2inv*r2inv;
-            forcelj = r6inv * (lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
-          }
-          fpair = (forcecoul + factor_lj*forcelj) * r2inv;
-        }
-
-        if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                             evdwl,ecoul,fpair,delx,dely,delz);
-      }
-    }
+  // Transform Coulombic forces and add van der Waals forces:
+  for (i = 0; i < ntotal; i++) {
+    f[i][0] = avg_lambda*f[i][0] + fvdw[i][0];
+    f[i][1] = avg_lambda*f[i][1] + fvdw[i][1];
+    f[i][2] = avg_lambda*f[i][2] + fvdw[i][2];
   }
 }
 
@@ -600,6 +295,10 @@ void PairLJCutCoulLongStewie::allocate()
   memory->create(lj3,n+1,n+1,"pair:lj3");
   memory->create(lj4,n+1,n+1,"pair:lj4");
   memory->create(offset,n+1,n+1,"pair:offset");
+
+  nmax = atom->nlocal;
+  if (force->newton) nmax += atom->nghost;
+  memory->create(fvdw,nmax,3,"pair:fvdw");
 }
 
 /* ----------------------------------------------------------------------
@@ -608,11 +307,20 @@ void PairLJCutCoulLongStewie::allocate()
 
 void PairLJCutCoulLongStewie::settings(int narg, char **arg)
 {
- if (narg < 1 || narg > 2) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 5 || narg % 2 == 0) error->all(FLERR,"Illegal pair_style command");
 
   cut_lj_global = force->numeric(FLERR,arg[0]);
-  if (narg == 1) cut_coul = cut_lj_global;
-  else cut_coul = force->numeric(FLERR,arg[1]);
+  cut_coul = force->numeric(FLERR,arg[1]);
+  double temp = force->numeric(FLERR,arg[2]);
+  minus_beta = -1.0/(force->boltz * temp);
+
+  nodes = (narg - 3)/2;
+  lambda = new double[nodes];
+  weight = new double[nodes];
+  for (int i = 0; i < nodes; i++) {
+    lambda[i] = force->numeric(FLERR,arg[3+i]);
+    weight[i] = force->numeric(FLERR,arg[3+nodes+i]);
+  }
 
   // reset cutoffs that have been explicitly set
 
