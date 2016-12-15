@@ -61,11 +61,15 @@ class PairLJCutCoulLongStewie : public Pair {
   void allocate();
   int is_numeric(char*);
   void add_node_to_grid(double, double);
+  void local_e_tally(int, int, int, int, double, double);
+  void local_v_tally(int, int, int, int, double, double, double, double, double*);
 
   int kspace_compute_flag;
 
   int nmax;
-  double **fvdw;
+  double **fvdwl;
+  double **fcoul;
+  double vcoul[6];
 
   int nodes;
   double *lambda;

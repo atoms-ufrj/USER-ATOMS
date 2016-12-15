@@ -12,8 +12,13 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Paul Crozier (SNL)
+   Contributing author: Charlles Abreu (ATOMS/UFRJ)
+   * Based on original code by Paul Crozier (SNL)
 ------------------------------------------------------------------------- */
+
+// TODO: Check how to correct vatom (atomic virial) after scaling with avg_lambda.
+// TODO: Create a special compute to provide information about scaled energies.
+// TODO: Implement Wang-Landau option for on-the-fly update of the weight.
 
 #include <math.h>
 #include <stdio.h>
@@ -73,7 +78,8 @@ PairLJCutCoulLongStewie::~PairLJCutCoulLongStewie()
     memory->destroy(lj4);
     memory->destroy(offset);
 
-    memory->destroy(fvdw);
+    memory->destroy(fvdwl);
+    memory->destroy(fcoul);
   }
   if (ftable) free_tables();
 }
@@ -104,7 +110,7 @@ void PairLJCutCoulLongStewie::setup()
 void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
 {
   int i,ii,j,jj,inum,jnum,itype,jtype,itable;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul,fpair;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,evdwl,ecoul;
   double fraction,table;
   double r,r2inv,r6inv,forcecoul,forcelj,factor_coul,factor_lj;
   double grij,expm2,prefactor,t,erfc;
@@ -131,12 +137,15 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
 
   // Zero van der Waals forces:
   int natoms = nlocal;
-  if (force->newton) natoms += atom->nghost;
+  if (newton_pair) natoms += atom->nghost;
   if (natoms > nmax) {
     nmax = natoms;
-    memory->grow(fvdw,nmax,3,"pair:fvdw");
+    memory->grow(fvdwl,nmax,3,"pair:fvdwl");
+    memory->grow(fcoul,nmax,3,"pair:fcoul");
   }
-  memset(&fvdw[0][0],0,nmax*3*sizeof(double));
+  memset(&fvdwl[0][0],0,natoms*3*sizeof(double));
+  memset(&fcoul[0][0],0,natoms*3*sizeof(double));
+  memset(&vcoul[0],0,6*sizeof(double));
 
   // loop over neighbors of my atoms
 
@@ -200,24 +209,21 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
         forcelj *= factor_lj*r2inv;
         forcecoul *= r2inv;
 
-        fvdw[i][0] += delx*forcelj;
-        fvdw[i][1] += dely*forcelj;
-        fvdw[i][2] += delz*forcelj;
-        f[i][0] += delx*forcecoul;
-        f[i][1] += dely*forcecoul;
-        f[i][2] += delz*forcecoul;
+        fvdwl[i][0] += delx*forcelj;
+        fvdwl[i][1] += dely*forcelj;
+        fvdwl[i][2] += delz*forcelj;
+        fcoul[i][0] += delx*forcecoul;
+        fcoul[i][1] += dely*forcecoul;
+        fcoul[i][2] += delz*forcecoul;
 
         if (newton_pair || j < nlocal) {
-          fvdw[j][0] -= delx*forcelj;
-          fvdw[j][1] -= dely*forcelj;
-          fvdw[j][2] -= delz*forcelj;
-          f[j][0] -= delx*forcecoul;
-          f[j][1] -= dely*forcecoul;
-          f[j][2] -= delz*forcecoul;
+          fvdwl[j][0] -= delx*forcelj;
+          fvdwl[j][1] -= dely*forcelj;
+          fvdwl[j][2] -= delz*forcelj;
+          fcoul[j][0] -= delx*forcecoul;
+          fcoul[j][1] -= dely*forcecoul;
+          fcoul[j][2] -= delz*forcecoul;
         }
-
-        // Combine:
-        fpair = forcelj + forcecoul;
 
         if (rsq < cut_coulsq) {
           if (!ncoultablebits || rsq <= tabinnersq)
@@ -235,15 +241,27 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
           evdwl *= factor_lj;
         } else evdwl = 0.0;
 
-        if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                             evdwl,ecoul,fpair,delx,dely,delz);
+        if (evflag) {
+          local_e_tally(i,j,nlocal,newton_pair,evdwl,ecoul);
+          local_v_tally(i,j,nlocal,newton_pair,forcelj,delx,dely,delz,&virial[0]);
+          local_v_tally(i,j,nlocal,newton_pair,forcecoul,delx,dely,delz,&vcoul[0]);
+        }
+
       }
     }
   }
 
-  if (vflag_fdotr) virial_fdotr_compute();
+  if (vflag_fdotr) {
+    for (i = 0; i < natoms; i++) {
+      f[i][0] = fvdwl[i][0] + fcoul[i][0];
+      f[i][1] = fvdwl[i][1] + fcoul[i][1];
+      f[i][2] = fvdwl[i][2] + fcoul[i][2];
+    }
+    virial_fdotr_compute();
+    memset(&f[0][0],0,natoms*3*sizeof(double));
+  }
 
-  // Compute (short + long) Coulombic energy of whole system:
+  // Compute short-range Coulombic energy of whole system:
   double one = force->pair->eng_coul;
   MPI_Allreduce(&one,&ecoul,1,MPI_DOUBLE,MPI_SUM,world);
 
@@ -272,14 +290,122 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
   }
   double avg_lambda = sum_lambda_pi/sum_pi;
 
-//  printf("avg_lambda = %f\n",avg_lambda);
-
-  // Transform Coulombic forces and add van der Waals forces:
+  // Scale Coulombic forces and add van der Waals forces:
   for (i = 0; i < natoms; i++) {
-    f[i][0] = avg_lambda*f[i][0] + fvdw[i][0];
-    f[i][1] = avg_lambda*f[i][1] + fvdw[i][1];
-    f[i][2] = avg_lambda*f[i][2] + fvdw[i][2];
+    f[i][0] = avg_lambda*(f[i][0] + fcoul[i][0]) + fvdwl[i][0];
+    f[i][1] = avg_lambda*(f[i][1] + fcoul[i][1]) + fvdwl[i][1];
+    f[i][2] = avg_lambda*(f[i][2] + fcoul[i][2]) + fvdwl[i][2];
   }
+
+  // Correct virial terms:
+  for (i = 0; i < 6; i++) {
+    virial[i] += avg_lambda*vcoul[i];
+    force->kspace->virial[i] *= avg_lambda;
+  }
+
+}
+
+/* ----------------------------------------------------------------------
+   tally energies into global and per-atom accumulators
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLongStewie::local_e_tally(int i, int j, int nlocal, int newton_pair,
+                                            double evdwl, double ecoul)
+{
+  double evdwlhalf,ecoulhalf,epairhalf;
+
+  if (eflag_either) {
+    if (eflag_global) {
+      if (newton_pair) {
+        eng_vdwl += evdwl;
+        eng_coul += ecoul;
+      } else {
+        evdwlhalf = 0.5*evdwl;
+        ecoulhalf = 0.5*ecoul;
+        if (i < nlocal) {
+          eng_vdwl += evdwlhalf;
+          eng_coul += ecoulhalf;
+        }
+        if (j < nlocal) {
+          eng_vdwl += evdwlhalf;
+          eng_coul += ecoulhalf;
+        }
+      }
+    }
+    if (eflag_atom) {
+      epairhalf = 0.5 * (evdwl + ecoul);
+      if (newton_pair || i < nlocal) eatom[i] += epairhalf;
+      if (newton_pair || j < nlocal) eatom[j] += epairhalf;
+    }
+  }
+}
+
+/* ----------------------------------------------------------------------
+   tally virial into global and per-atom accumulators
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLongStewie::local_v_tally(int i, int j, int nlocal, int newton_pair,
+                                            double fpair, double delx, double dely, double delz,
+                                            double *virial)
+{
+  double v[6];
+
+  if (vflag_either) {
+    v[0] = delx*delx*fpair;
+    v[1] = dely*dely*fpair;
+    v[2] = delz*delz*fpair;
+    v[3] = delx*dely*fpair;
+    v[4] = delx*delz*fpair;
+    v[5] = dely*delz*fpair;
+
+    if (vflag_global) {
+      if (newton_pair) {
+        virial[0] += v[0];
+        virial[1] += v[1];
+        virial[2] += v[2];
+        virial[3] += v[3];
+        virial[4] += v[4];
+        virial[5] += v[5];
+      } else {
+        if (i < nlocal) {
+          virial[0] += 0.5*v[0];
+          virial[1] += 0.5*v[1];
+          virial[2] += 0.5*v[2];
+          virial[3] += 0.5*v[3];
+          virial[4] += 0.5*v[4];
+          virial[5] += 0.5*v[5];
+        }
+        if (j < nlocal) {
+          virial[0] += 0.5*v[0];
+          virial[1] += 0.5*v[1];
+          virial[2] += 0.5*v[2];
+          virial[3] += 0.5*v[3];
+          virial[4] += 0.5*v[4];
+          virial[5] += 0.5*v[5];
+        }
+      }
+    }
+
+    if (vflag_atom) {
+      if (newton_pair || i < nlocal) {
+        vatom[i][0] += 0.5*v[0];
+        vatom[i][1] += 0.5*v[1];
+        vatom[i][2] += 0.5*v[2];
+        vatom[i][3] += 0.5*v[3];
+        vatom[i][4] += 0.5*v[4];
+        vatom[i][5] += 0.5*v[5];
+      }
+      if (newton_pair || j < nlocal) {
+        vatom[j][0] += 0.5*v[0];
+        vatom[j][1] += 0.5*v[1];
+        vatom[j][2] += 0.5*v[2];
+        vatom[j][3] += 0.5*v[3];
+        vatom[j][4] += 0.5*v[4];
+        vatom[j][5] += 0.5*v[5];
+      }
+    }
+  }
+
 }
 
 /* ----------------------------------------------------------------------
@@ -310,7 +436,8 @@ void PairLJCutCoulLongStewie::allocate()
 
   nmax = atom->nlocal;
   if (force->newton) nmax += atom->nghost;
-  memory->create(fvdw,nmax,3,"pair:fvdw");
+  memory->create(fvdwl,nmax,3,"pair:fvdwl");
+  memory->create(fcoul,nmax,3,"pair:fcoul");
 }
 
 /* ----------------------------------------------------------------------

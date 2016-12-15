@@ -10,23 +10,26 @@ atom_style      full
 bond_style      harmonic
 angle_style     harmonic
 kspace_style    pppm 0.0001
+
 pair_style      lj/cut/coul/long/stewie ${rc} ${temp}
+pair_modify	set_grid 0.0 0.25 0.5 0.75 1.0
+
+#pair_style      lj/cut/coul/long ${rc}
 
 pair_modify	mix arithmetic
-pair_modify	set_grid 0.0 0.25 0.5 0.75 1.0
 
 read_data       water.lmp
 
 
 variable	tdamp equal 100*${dt}
-fix             1 all nvt temp ${temp} ${temp} ${tdamp}
+fix             H all nvt temp ${temp} ${temp} ${tdamp}
 velocity        all create ${temp} 87287
 timestep        ${dt}
 
 neighbor        2.0 bin
 neigh_modify    delay 0 every 1 check yes
 
-thermo_style    custom step temp evdwl etail emol elong ecoul pe
+thermo_style    custom step temp evdwl etail emol elong ecoul pe press f_H
 thermo_modify	norm no
 thermo          100
 run             300
