@@ -83,7 +83,19 @@ PairLJCutCoulLongStewie::~PairLJCutCoulLongStewie()
 
 void PairLJCutCoulLongStewie::setup()
 {
-  printf("===> STEWIE SETUP\n");
+  if (nodes == 0)
+    error->all(FLERR,"Coupling parameter grid must be defined via pair_modify command");
+
+  printf("lambdas = [ ");
+  for (int i = 0; i < nodes; i++)
+    printf("%f ",lambda[i]);
+  printf("]\n");
+
+  printf("weights = [ ");
+  for (int i = 0; i < nodes; i++)
+    printf("%f ",weight[i]);
+  printf("]\n");
+
   force->kspace->setup();
 }
 
@@ -118,10 +130,10 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
   firstneigh = list->firstneigh;
 
   // Zero van der Waals forces:
-  int ntotal = nlocal;
-  if (force->newton) ntotal += atom->nghost;
-  if (ntotal > nmax) {
-    nmax = ntotal;
+  int natoms = nlocal;
+  if (force->newton) natoms += atom->nghost;
+  if (natoms > nmax) {
+    nmax = natoms;
     memory->grow(fvdw,nmax,3,"pair:fvdw");
   }
   memset(&fvdw[0][0],0,nmax*3*sizeof(double));
@@ -263,7 +275,7 @@ void PairLJCutCoulLongStewie::compute(int eflag, int vflag)
 //  printf("avg_lambda = %f\n",avg_lambda);
 
   // Transform Coulombic forces and add van der Waals forces:
-  for (i = 0; i < ntotal; i++) {
+  for (i = 0; i < natoms; i++) {
     f[i][0] = avg_lambda*f[i][0] + fvdw[i][0];
     f[i][1] = avg_lambda*f[i][1] + fvdw[i][1];
     f[i][2] = avg_lambda*f[i][2] + fvdw[i][2];
@@ -307,20 +319,23 @@ void PairLJCutCoulLongStewie::allocate()
 
 void PairLJCutCoulLongStewie::settings(int narg, char **arg)
 {
-  if (narg < 5 || narg % 2 == 0) error->all(FLERR,"Illegal pair_style command");
+  if (narg < 2 || narg > 3) error->all(FLERR,"Illegal pair_style command");
 
-  cut_lj_global = force->numeric(FLERR,arg[0]);
-  cut_coul = force->numeric(FLERR,arg[1]);
-  double temp = force->numeric(FLERR,arg[2]);
-  minus_beta = -1.0/(force->boltz * temp);
-
-  nodes = (narg - 3)/2;
-  lambda = new double[nodes];
-  weight = new double[nodes];
-  for (int i = 0; i < nodes; i++) {
-    lambda[i] = force->numeric(FLERR,arg[3+i]);
-    weight[i] = force->numeric(FLERR,arg[3+nodes+i]);
+  double temp;
+  if (narg == 2) {
+    cut_lj_global = cut_coul = force->numeric(FLERR,arg[0]);
+    temp = force->numeric(FLERR,arg[1]);
   }
+  else {
+    cut_lj_global = force->numeric(FLERR,arg[0]);
+    cut_coul = force->numeric(FLERR,arg[1]);
+    temp = force->numeric(FLERR,arg[2]);
+  }
+  minus_beta = -1.0/(force->boltz*temp);
+
+  nodes = 0;
+  memory->create(lambda,nodes,"pair:lambda");
+  memory->create(weight,nodes,"pair:weight");
 
   // reset cutoffs that have been explicitly set
 
@@ -339,7 +354,6 @@ void PairLJCutCoulLongStewie::settings(int narg, char **arg)
   kspace_compute_flag = force->kspace->compute_flag;
   force->kspace->compute_flag = 0;
 
-  printf("===> STEWIE SETTINGS\n");
 }
 
 /* ----------------------------------------------------------------------
@@ -440,7 +454,6 @@ void PairLJCutCoulLongStewie::init_style()
 
   if (ncoultablebits) init_tables(cut_coul,cut_respa);
 
-  printf("===> STEWIE INIT\n");
 }
 
 /* ----------------------------------------------------------------------
@@ -712,3 +725,104 @@ void *PairLJCutCoulLongStewie::extract(const char *str, int &dim)
   if (strcmp(str,"sigma") == 0) return (void *) sigma;
   return NULL;
 }
+
+/* ---------------------------------------------------------------------- */
+
+int PairLJCutCoulLongStewie::is_numeric(char *str)
+{
+  int n = strlen(str);
+  for (int i = 0; i < n; i++) {
+    if (isdigit(str[i])) continue;
+    if (str[i] == '-' || str[i] == '+' || str[i] == '.') continue;
+    if (str[i] == 'e' || str[i] == 'E') continue;
+    return 0;
+  }
+  return 1;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void PairLJCutCoulLongStewie::modify_params(int narg, char **arg)
+{
+  if (narg == 0) error->all(FLERR,"Illegal pair_modify command");
+
+  int iarg = 0;
+  while (iarg < narg) {
+
+    if (strcmp(arg[iarg],"set_grid") == 0) {
+
+      if (iarg+1 > narg)
+        error->all(FLERR,"Illegal pair_modify command");
+      if (!is_numeric(arg[iarg+1]))
+        error->all(FLERR,"Illegal pair_modify command");
+      while (iarg+1 < narg && is_numeric(arg[iarg+1])) {
+        iarg++;
+        add_node_to_grid(force->numeric(FLERR,arg[iarg]),0.0);
+      }
+      iarg++;
+
+    }
+    else if (strcmp(arg[iarg],"add_node") == 0) {
+
+      if (iarg+3 > narg)
+        error->all(FLERR,"Illegal pair_modify command");
+      add_node_to_grid(force->numeric(FLERR,arg[iarg+1]),force->numeric(FLERR,arg[iarg+2]));
+      iarg += 3;
+
+    }
+    else if (strcmp(arg[iarg],"set_weights") == 0) {
+
+      if (nodes == 0)
+        error->all(FLERR,"Softcore lambda grid has not been defined");
+      if (iarg+1+nodes > narg)
+        error->all(FLERR,"Illegal pair_modify command");
+      for (int i = 0; i < nodes; i++)
+        weight[i] = force->numeric(FLERR,arg[iarg+1+i]);
+      iarg += 1+nodes;
+
+    }
+    else { // unknown keyword:
+
+      Pair::modify_params(narg, arg);
+      return;
+
+    }
+
+  }
+}
+
+/* ----------------------------------------------------------------------
+   adds a new node to the lambda grid, in increasing order of lambdas
+------------------------------------------------------------------------- */
+
+void PairLJCutCoulLongStewie::add_node_to_grid(double lambda_value, double weight_value)
+{
+  int i,j;
+  double *backup = new double[nodes];
+
+  if ( (lambda_value < 0.0) || (lambda_value > 1.0) )
+    error->all(FLERR,"Coupling parameter value is out of range");
+  memcpy(backup,lambda,sizeof(double)*nodes);
+  nodes++;
+  memory->grow(lambda,nodes,"pair:lambda");
+  j = 0;
+  for (i = 0; i < nodes-1; i++)
+    if (backup[i] < lambda_value) {
+      lambda[i] = backup[i];
+      j = i+1;
+    } else
+      lambda[i+1] = backup[i];
+  lambda[j] = lambda_value;
+
+  memcpy(backup,weight,sizeof(double)*(nodes-1));
+  memory->grow(weight,nodes,"pair:weight");
+  for (i = 0; i < j; i++)
+    weight[i] = backup[i];
+  weight[j] = weight_value;
+  for (i = j+1; i < nodes; i++)
+    weight[i] = backup[i-1];
+
+}
+
+/* ---------------------------------------------------------------------- */
+

@@ -45,6 +45,7 @@ class PairLJCutCoulLongStewie : public Pair {
 
   virtual void *extract(const char *, int &);
 
+  void modify_params(int, char**);
   void setup();
 
  protected:
@@ -57,14 +58,19 @@ class PairLJCutCoulLongStewie : public Pair {
   double qdist;             // TIP4P distance from O site to negative charge
   double g_ewald;
 
-  virtual void allocate();
+  void allocate();
+  int is_numeric(char*);
+  void add_node_to_grid(double, double);
 
   int kspace_compute_flag;
+
   int nmax;
   double **fvdw;
+
   int nodes;
   double *lambda;
   double *weight;
+
   double minus_beta;
 };
 
