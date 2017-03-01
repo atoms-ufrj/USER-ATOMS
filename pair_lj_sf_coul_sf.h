@@ -5,7 +5,7 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
@@ -27,29 +27,37 @@ namespace LAMMPS_NS {
 class PairLJSFCoulSF : public Pair {
  public:
   PairLJSFCoulSF(class LAMMPS *);
-  ~PairLJSFCoulSF();
-  void compute(int, int);
+  virtual ~PairLJSFCoulSF();
+  virtual void compute(int, int);
   void settings(int, char **);
   void coeff(int, char **);
   void init_style();
+  void init_list(int, class NeighList *);
   double init_one(int, int);
   void write_restart(FILE *);
   void read_restart(FILE *);
   void write_restart_settings(FILE *);
   void read_restart_settings(FILE *);
+  void write_data(FILE *);
+  void write_data_all(FILE *);
   double single(int, int, int, int, double, double, double, double &);
   void *extract(const char *, int &);
 
+  void compute_inner();
+  void compute_middle();
+  void compute_outer(int, int);
+
  protected:
-  double cut_lj_global;
-  double **cut_lj, **cut_ljsq;
-  double **epsilon, **sigma;
-  double **lj1, **lj2, **lj3, **lj4, **e_shift_lj, **f_shift_lj;
-  
-  double cut_coul, cut_coulsq;
-  double f_shift, e_shift;
-  
-  void allocate();
+  double cut_global;
+  double **cut;
+  double **epsilon,**sigma;
+  double **lj1,**lj2,**lj3,**lj4,**offset;
+  double *cut_respa;
+
+  double **e_shift_lj, **f_shift_lj;
+  double **f_shift_coul, **e_shift_coul;
+
+  virtual void allocate();
 };
 
 }
@@ -69,8 +77,9 @@ E: Incorrect args for pair coefficients
 
 Self-explanatory.  Check the input script or data file.
 
-E: Pair style lj/sf/coul/sf requires atom attribute q
+E: Pair cutoff < Respa interior cutoff
 
-The atom style defined does not have these attributes.
+One or more pairwise cutoffs are too short to use with the specified
+rRESPA cutoffs.
 
 */
