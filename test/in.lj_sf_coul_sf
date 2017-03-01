@@ -1,0 +1,33 @@
+variable	dt equal 1.0
+variable	temp equal 298.3
+variable	rc equal 10.0
+
+units           real
+atom_style      full
+
+bond_style      harmonic
+angle_style     harmonic
+
+pair_style      lj/sf/coul/sf ${rc}
+#pair_style      lj/sf ${rc}
+
+pair_modify	mix arithmetic
+
+read_data       water.lmp
+
+delete_bonds    all bond 1
+delete_bonds    all angle 1
+
+variable	tdamp equal 100*${dt}
+fix             NVE all rigid/nve molecule
+velocity        all create ${temp} 87287
+timestep        ${dt}
+
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+thermo_style    custom step temp evdwl ecoul pe press etotal
+thermo_modify	norm no
+thermo          100
+run             500
+
