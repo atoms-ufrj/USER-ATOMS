@@ -1,0 +1,36 @@
+#print		"usage: lammps -in NVE.inp -var dt <timestep>"
+variable	dt equal 1
+variable	nome string NVE_${dt}fs
+log		${nome}.log
+variable	rc equal 10.0
+variable	skin equal 2.0
+
+variable	temp equal 302.951
+variable	seed equal 2387
+variable	nprod equal 6000000/${dt}
+variable	nthermo equal 60/${dt}
+
+units		real
+atom_style	full
+bond_style	harmonic
+angle_style	harmonic
+pair_style	lj/smooth/coul/smooth 9.5 10.0 0.29
+pair_modify	mix arithmetic tail no shift no
+
+read_data	water.lmp
+
+timestep 	${dt}
+
+neighbor	${skin} bin
+neigh_modify	delay 0 every 1 check yes
+
+compute		Virial all pressure NULL virial
+
+fix		1 all nve
+fix		2 all shake 0.00001 50 0 b 1 a 1
+velocity	all create ${temp} ${seed}
+thermo		${nthermo}
+thermo_style	custom step temp ke epair pe etotal c_Virial press
+
+run		${nprod}
+

@@ -1,6 +1,10 @@
-variable	dt equal 1.0
+variable	dt equal 2.0
 variable	temp equal 298.3
 variable	rc equal 10.0
+
+variable	respaN  equal 2
+variable	inRc equal 3.0
+variable	exRc equal 7.0
 
 units           real
 atom_style      full
@@ -9,19 +13,20 @@ bond_style      harmonic
 angle_style     harmonic
 
 pair_style      lj/sf/coul/sf ${rc}
-#pair_style      lj/sf ${rc}
+#pair_style      lj/cut ${rc}
 
 pair_modify	mix arithmetic
 
 read_data       water.lmp
 
-delete_bonds    all bond 1
-delete_bonds    all angle 1
-
-variable	tdamp equal 100*${dt}
-fix             NVE all rigid/nve molecule
+#fix             NVE all rigid molecule
+#fix             2 all shake 0.000001 500 0 m 1.0 a 1 
+fix		NVE all nve
 velocity        all create ${temp} 87287
 timestep        ${dt}
+
+#delete_bonds    all bond 1
+#delete_bonds    all angle 1
 
 neighbor        2.0 bin
 neigh_modify    delay 0 every 1 check yes
@@ -29,5 +34,8 @@ neigh_modify    delay 0 every 1 check yes
 thermo_style    custom step temp evdwl ecoul pe press etotal
 thermo_modify	norm no
 thermo          100
+#run_style	verlet
+run_style	respa 2 ${respaN} inner 1 ${inRc} ${exRc} outer 2
+
 run             500
 
