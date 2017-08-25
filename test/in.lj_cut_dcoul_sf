@@ -1,0 +1,28 @@
+units           real
+atom_style      full
+
+bond_style      harmonic
+angle_style     harmonic
+pair_style      lj/cut/dcoul/sf 0.0 8.0
+pair_modify	mix arithmetic self yes
+#kspace_style    pppm 0.0001
+
+read_data       water_TIP3P.lmp
+
+pair_coeff	1 1 0.0000 0.0000 # HW
+pair_coeff	1 2 0.0000 0.0000 # HW
+pair_coeff	2 2 0.1520 3.1507 # OW
+
+dump		1 all custom 20 test.lammpstrj id mol type x y z ix iy iz
+
+fix             1 all nve
+velocity        all create 298.15 87287
+timestep        1.0
+
+neighbor        1.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+thermo_style    custom step temp pe evdwl emol elong ecoul
+thermo_modify	norm no
+thermo          100
+run             0
