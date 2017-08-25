@@ -29,8 +29,8 @@ using namespace MathConst;
 
 PairLJCutCoulDampSF::PairLJCutCoulDampSF(LAMMPS *lmp) : Pair(lmp)
 {
-  single_enable = 0;
-  self_flag = 1;
+  single_enable = 1;
+  self_flag = 0;
 }
 
 /* ---------------------------------------------------------------------- */
