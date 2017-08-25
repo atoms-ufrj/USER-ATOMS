@@ -22,14 +22,13 @@ PairStyle(lj/cut/dcoul/sf,PairLJCutDcoulSF)
 
 #include "pair.h"
 
-#define EWALD_F   1.12837917
 #define EWALD_P   0.3275911
+#define EWALD_F   1.128379167
 #define A1        0.254829592
 #define A2       -0.284496736
 #define A3        1.421413741
 #define A4       -1.453152027
 #define A5        1.061405429
-#define two_pis   1.12837916709551
 
 namespace LAMMPS_NS {
 
@@ -70,7 +69,7 @@ class PairLJCutDcoulSF : public Pair {
     f = exp(-ar*ar)/r;
     v = 1.0 / (1.0 + EWALD_P*ar);
     v *= (A1 + v*(A2 + v*(A3 + v*(A4 + v*A5))))*f;
-    f = v/r + two_pis*alpha*f;
+    f = v/r + EWALD_F*alpha*f;
   }
 };
 

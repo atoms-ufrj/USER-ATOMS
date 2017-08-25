@@ -1,0 +1,22 @@
+variable			rc equal 12.0
+
+units				real
+boundary        		p p p
+
+atom_style			full
+bond_style			harmonic
+angle_style			harmonic
+dihedral_style			charmm
+improper_style			cvff
+special_bonds   		lj 0.0 0.0 0.5 coul 0.0 0.0 0.8333 # AMBER force field settings
+
+pair_style                      lj/cut/dcoul/sf 0.2 ${rc}
+pair_modify			self no mix arithmetic tail yes
+
+read_data			emim_BCN4.lmp
+
+fix				NVE all nve
+thermo				1
+thermo_style			custom step temp press pe ebond eangle edihed eimp evdwl ecoul elong etotal
+
+run				100

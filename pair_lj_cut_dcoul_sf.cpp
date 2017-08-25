@@ -59,9 +59,9 @@ PairLJCutDcoulSF::~PairLJCutDcoulSF()
 
 void PairLJCutDcoulSF::compute(int eflag, int vflag)
 {
-  int i,j,ii,jj,inum,jnum,itype,jtype;
+  int i,j,ii,jj,inum,jnum,itype,jtype,intra;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,vr,fr,evdwl,ecoul,fpair;
-  double r,rsq,r2inv,r6inv,factor_coul,factor_lj,prefactor;
+  double r,rsq,r2inv,r6inv,forcelj,prefactor,forcecoul,factor_lj,factor_coul;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
   evdwl = ecoul = 0.0;
@@ -85,10 +85,8 @@ void PairLJCutDcoulSF::compute(int eflag, int vflag)
 
   // Compute self energy:
   if (eflag && self_flag)
-    for (i = 0; i < nlocal; i++) {
-      qtmp = qqrd2e*q[i];
-      ev_tally(i,i,nlocal,0,0.0,e_self*qtmp*qtmp,0.0,0.0,0.0,0.0);
-    }
+    for (i = 0; i < nlocal; i++)
+      ev_tally(i,i,nlocal,0,0.0,e_self*q[i]*q[i],0.0,0.0,0.0,0.0);
 
   // loop over neighbors of my atoms
 
@@ -104,8 +102,9 @@ void PairLJCutDcoulSF::compute(int eflag, int vflag)
 
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
-      factor_lj = special_lj[sbmask(j)];
-      factor_coul = special_coul[sbmask(j)];
+      intra = sbmask(j);
+      factor_lj = special_lj[intra];
+      factor_coul = special_coul[intra];
       j &= NEIGHMASK;
 
       delx = xtmp - x[j][0];
@@ -116,19 +115,30 @@ void PairLJCutDcoulSF::compute(int eflag, int vflag)
 
       if (rsq < cutsq[itype][jtype]) {
         r2inv = 1.0/rsq;
-        fpair = 0.0;
+
         if (rsq < cut_ljsq[itype][jtype]) {
           r6inv = r2inv*r2inv*r2inv;
-          fpair += factor_lj*r6inv*(lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
+          forcelj = factor_lj*r6inv*(lj1[itype][jtype]*r6inv - lj2[itype][jtype]);
         }
-        if (rsq < cut_coulsq) {
-          r = sqrt(rsq);
-          unshifted( r, vr, fr );
-          prefactor = factor_coul*qtmp*q[j];
-          fpair += prefactor*(fr - f_shift)*r;
-        }
+        else
+          forcelj = 0.0;
 
-        fpair *= r2inv;
+        if (rsq < cut_coulsq) {
+          prefactor = factor_coul*qtmp*q[j];
+          if (intra) {
+            vr = prefactor*sqrt(r2inv);
+            forcecoul = vr;
+          }
+          else {
+            r = sqrt(rsq);
+            unshifted( r, vr, fr );
+            forcecoul = prefactor*(fr - f_shift)*r;
+          }
+        }
+        else
+          forcecoul = 0.0;
+
+        fpair = (forcelj + forcecoul)*r2inv;
         f[i][0] += delx*fpair;
         f[i][1] += dely*fpair;
         f[i][2] += delz*fpair;
@@ -146,7 +156,10 @@ void PairLJCutDcoulSF::compute(int eflag, int vflag)
             evdwl = 0.0;
 
           if (rsq < cut_coulsq)
-            ecoul = prefactor*(vr + r*f_shift - e_shift);
+            if (intra)
+              ecoul = vr;
+            else
+              ecoul = prefactor*(vr + r*f_shift - e_shift);
           else
             ecoul = 0.0;
         }
@@ -262,7 +275,7 @@ void PairLJCutDcoulSF::init_style()
   cut_coulsq = cut_coul * cut_coul;
   unshifted( cut_coul, e_shift, f_shift );
   e_shift += f_shift*cut_coul;
-  e_self = -0.5*(e_shift + two_pis*alpha)/force->qqrd2e;
+  e_self = -(e_shift/2.0 + alpha/sqrt(MY_PI))*force->qqrd2e;
 }
 
 /* ----------------------------------------------------------------------
@@ -334,23 +347,10 @@ void PairLJCutDcoulSF::modify_params(int narg, char **arg)
   if (narg == 0)
     error->all(FLERR,"Illegal pair_modify command");
 
-  int nkwds = 1;
-  char *keyword[nkwds];
-  keyword[0] = (char*)"self";
-
-  int ns = 0;
-  int skip[narg];
-
-  int m;
-  int iarg = 0;
+  int iarg, ns, skip[narg];
+  iarg = ns = 0;
   while (iarg < narg) {
-
-    // Search for a keyword:
-    for (m = 0; m < nkwds; m++)
-      if (strcmp(arg[iarg],keyword[m]) == 0)
-        break;
-
-    if (m == 0) { // self
+    if (strcmp(arg[iarg],"self") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR,"Illegal pair_modify command");
       if (strcmp(arg[iarg+1],"yes") == 0)
@@ -370,7 +370,7 @@ void PairLJCutDcoulSF::modify_params(int narg, char **arg)
   if (ns > 0) {
     for (int i = 0; i < ns; i++)
       arg[i] = arg[skip[i]];
-      Pair::modify_params(ns, arg);
+    Pair::modify_params(ns, arg);
   }
 }
 
