@@ -13,12 +13,12 @@
 
 #ifdef PAIR_CLASS
 
-PairStyle(lj/cut/dcoul/sf,PairLJCutDcoulSF)
+PairStyle(lj/cut/coul/damp/sf,PairLJCutCoulDampSF)
 
 #else
 
-#ifndef LMP_PAIR_LJ_CUT_DCOUL_SF_H
-#define LMP_PAIR_LJ_CUT_DCOUL_SF_H
+#ifndef LMP_PAIR_LJ_CUT_COUL_DAMP_SF_H
+#define LMP_PAIR_LJ_CUT_COUL_DAMP_SF_H
 
 #include "pair.h"
 
@@ -32,10 +32,10 @@ PairStyle(lj/cut/dcoul/sf,PairLJCutDcoulSF)
 
 namespace LAMMPS_NS {
 
-class PairLJCutDcoulSF : public Pair {
+class PairLJCutCoulDampSF : public Pair {
  public:
-  PairLJCutDcoulSF(class LAMMPS *);
-  ~PairLJCutDcoulSF();
+  PairLJCutCoulDampSF(class LAMMPS *);
+  ~PairLJCutCoulDampSF();
   void compute(int, int);
   void settings(int, char **);
   void coeff(int, char **);

@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 #include "string.h"
-#include "pair_lj_cut_dcoul_sf.h"
+#include "pair_lj_cut_coul_damp_sf.h"
 #include "atom.h"
 #include "comm.h"
 #include "force.h"
@@ -27,7 +27,7 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairLJCutDcoulSF::PairLJCutDcoulSF(LAMMPS *lmp) : Pair(lmp)
+PairLJCutCoulDampSF::PairLJCutCoulDampSF(LAMMPS *lmp) : Pair(lmp)
 {
   single_enable = 0;
   self_flag = 1;
@@ -35,7 +35,7 @@ PairLJCutDcoulSF::PairLJCutDcoulSF(LAMMPS *lmp) : Pair(lmp)
 
 /* ---------------------------------------------------------------------- */
 
-PairLJCutDcoulSF::~PairLJCutDcoulSF()
+PairLJCutCoulDampSF::~PairLJCutCoulDampSF()
 {
   if (!copymode) {
     if (allocated) {
@@ -57,7 +57,7 @@ PairLJCutDcoulSF::~PairLJCutDcoulSF()
 
 /* ---------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::compute(int eflag, int vflag)
+void PairLJCutCoulDampSF::compute(int eflag, int vflag)
 {
   int i,j,ii,jj,inum,jnum,itype,jtype,intra;
   double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,vr,fr,evdwl,ecoul,fpair;
@@ -177,7 +177,7 @@ void PairLJCutDcoulSF::compute(int eflag, int vflag)
    allocate all arrays
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::allocate()
+void PairLJCutCoulDampSF::allocate()
 {
   allocated = 1;
   int n = atom->ntypes;
@@ -204,7 +204,7 @@ void PairLJCutDcoulSF::allocate()
    global settings
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::settings(int narg, char **arg)
+void PairLJCutCoulDampSF::settings(int narg, char **arg)
 {
   if (narg < 2 || narg > 3) error->all(FLERR,"Illegal pair_style command");
 
@@ -231,7 +231,7 @@ void PairLJCutDcoulSF::settings(int narg, char **arg)
    set coeffs for one or more type pairs
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::coeff(int narg, char **arg)
+void PairLJCutCoulDampSF::coeff(int narg, char **arg)
 {
   if (narg < 4 || narg > 5) 
     error->all(FLERR,"Incorrect args for pair coefficients");
@@ -265,7 +265,7 @@ void PairLJCutDcoulSF::coeff(int narg, char **arg)
    init specific to this pair style
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::init_style()
+void PairLJCutCoulDampSF::init_style()
 {
   if (!atom->q_flag)
     error->all(FLERR,"Pair style lj/cut/coul/dsf requires atom charges");
@@ -282,7 +282,7 @@ void PairLJCutDcoulSF::init_style()
    init for one type pair i,j and corresponding j,i
 ------------------------------------------------------------------------- */
 
-double PairLJCutDcoulSF::init_one(int i, int j)
+double PairLJCutCoulDampSF::init_one(int i, int j)
 {
   if (setflag[i][j] == 0) {
     epsilon[i][j] = mix_energy(epsilon[i][i],epsilon[j][j],
@@ -342,7 +342,7 @@ double PairLJCutDcoulSF::init_one(int i, int j)
 
 /* ---------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::modify_params(int narg, char **arg)
+void PairLJCutCoulDampSF::modify_params(int narg, char **arg)
 {
   if (narg == 0)
     error->all(FLERR,"Illegal pair_modify command");
@@ -378,7 +378,7 @@ void PairLJCutDcoulSF::modify_params(int narg, char **arg)
   proc 0 writes to restart file
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::write_restart(FILE *fp)
+void PairLJCutCoulDampSF::write_restart(FILE *fp)
 {
   write_restart_settings(fp);
 
@@ -398,7 +398,7 @@ void PairLJCutDcoulSF::write_restart(FILE *fp)
   proc 0 reads from restart file, bcasts
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::read_restart(FILE *fp)
+void PairLJCutCoulDampSF::read_restart(FILE *fp)
 {
   read_restart_settings(fp);
   allocate();
@@ -426,7 +426,7 @@ void PairLJCutDcoulSF::read_restart(FILE *fp)
   proc 0 writes to restart file
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::write_restart_settings(FILE *fp)
+void PairLJCutCoulDampSF::write_restart_settings(FILE *fp)
 {
   fwrite(&alpha,sizeof(double),1,fp);
   fwrite(&cut_lj_global,sizeof(double),1,fp);
@@ -441,7 +441,7 @@ void PairLJCutDcoulSF::write_restart_settings(FILE *fp)
   proc 0 reads from restart file, bcasts
 ------------------------------------------------------------------------- */
 
-void PairLJCutDcoulSF::read_restart_settings(FILE *fp)
+void PairLJCutCoulDampSF::read_restart_settings(FILE *fp)
 {
   if (comm->me == 0) {
     fread(&alpha,sizeof(double),1,fp);
@@ -463,7 +463,7 @@ void PairLJCutDcoulSF::read_restart_settings(FILE *fp)
 
 /* ---------------------------------------------------------------------- */
 
-double PairLJCutDcoulSF::single(int i, int j, int itype, int jtype, double rsq,
+double PairLJCutCoulDampSF::single(int i, int j, int itype, int jtype, double rsq,
                                 double factor_coul, double factor_lj,
                                 double &fforce)
 {
@@ -495,7 +495,7 @@ double PairLJCutDcoulSF::single(int i, int j, int itype, int jtype, double rsq,
 
 /* ---------------------------------------------------------------------- */
 
-void *PairLJCutDcoulSF::extract(const char *str, int &dim)
+void *PairLJCutCoulDampSF::extract(const char *str, int &dim)
 {
   if (strcmp(str,"cut_coul") == 0) {
     dim = 0;
