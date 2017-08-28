@@ -125,15 +125,9 @@ void PairLJCutCoulDampSF::compute(int eflag, int vflag)
 
         if (rsq < cut_coulsq) {
           prefactor = factor_coul*qtmp*q[j];
-          if (intra) {
-            vr = prefactor*sqrt(r2inv);
-            forcecoul = vr;
-          }
-          else {
-            r = sqrt(rsq);
-            unshifted( r, vr, fr );
-            forcecoul = prefactor*(fr - f_shift)*r;
-          }
+          r = sqrt(rsq);
+          unshifted( r, vr, fr );
+          forcecoul = prefactor*(fr - f_shift)*r;
         }
         else
           forcecoul = 0.0;
@@ -156,10 +150,7 @@ void PairLJCutCoulDampSF::compute(int eflag, int vflag)
             evdwl = 0.0;
 
           if (rsq < cut_coulsq)
-            if (intra)
-              ecoul = vr;
-            else
-              ecoul = prefactor*(vr + r*f_shift - e_shift);
+            ecoul = prefactor*(vr + r*f_shift - e_shift);
           else
             ecoul = 0.0;
         }
