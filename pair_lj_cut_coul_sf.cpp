@@ -271,7 +271,7 @@ void PairLJCutCoulSF::init_style()
   e_shift = 1.0/cut_coul;
   f_shift = e_shift*e_shift;
   e_shift += f_shift*cut_coul;
-  e_self = -(e_shift/2.0 + alpha/sqrt(MY_PI))*force->qqrd2e;
+  e_self = -(e_shift/2.0)*force->qqrd2e;
 }
 
 /* ----------------------------------------------------------------------
@@ -424,7 +424,6 @@ void PairLJCutCoulSF::read_restart(FILE *fp)
 
 void PairLJCutCoulSF::write_restart_settings(FILE *fp)
 {
-  fwrite(&alpha,sizeof(double),1,fp);
   fwrite(&cut_lj_global,sizeof(double),1,fp);
   fwrite(&cut_coul,sizeof(double),1,fp);
   fwrite(&offset_flag,sizeof(int),1,fp);
@@ -440,7 +439,6 @@ void PairLJCutCoulSF::write_restart_settings(FILE *fp)
 void PairLJCutCoulSF::read_restart_settings(FILE *fp)
 {
   if (comm->me == 0) {
-    fread(&alpha,sizeof(double),1,fp);
     fread(&cut_lj_global,sizeof(double),1,fp);
     fread(&cut_coul,sizeof(double),1,fp);
     fread(&offset_flag,sizeof(int),1,fp);
@@ -448,7 +446,6 @@ void PairLJCutCoulSF::read_restart_settings(FILE *fp)
     fread(&tail_flag,sizeof(int),1,fp);
     fread(&self_flag,sizeof(int),1,fp);
   }
-  MPI_Bcast(&alpha,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_lj_global,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
@@ -473,7 +470,8 @@ double PairLJCutCoulSF::single(int i, int j, int itype, int jtype, double rsq,
   }
   if (rsq < cut_coulsq) {
     r = sqrt(rsq);
-    unshifted( r, vr, fr );
+    vr = 1.0/r;
+    fr = vr*vr;
     prefactor = factor_coul * force->qqrd2e * atom->q[i] * atom->q[j];
     fforce += prefactor*(fr-f_shift)*r;
   }

@@ -53,15 +53,6 @@ class PairLJCutCoulSF : public Pair {
   int self_flag;
 
   virtual void allocate();
-
-  inline void unshifted( double r, double &v, double &f )
-  {
-    double ar = alpha*r;
-    f = exp(-ar*ar)/r;
-    v = 1.0 / (1.0 + EWALD_P*ar);
-    v *= (A1 + v*(A2 + v*(A3 + v*(A4 + v*A5))))*f;
-    f = v/r + EWALD_F*alpha*f;
-  }
 };
 
 }
