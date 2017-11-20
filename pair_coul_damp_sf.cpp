@@ -5,13 +5,21 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
-#include "string.h"
+/* ----------------------------------------------------------------------
+   Contributing author: Trung Dac Nguyen (ORNL)
+   References: Fennell and Gezelter, JCP 124, 234104 (2006)
+------------------------------------------------------------------------- */
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "pair_coul_damp_sf.h"
 #include "atom.h"
 #include "comm.h"
@@ -27,19 +35,18 @@ using namespace MathConst;
 
 /* ---------------------------------------------------------------------- */
 
-PairCoulDampSF::PairCoulDampSF(LAMMPS *lmp) : Pair(lmp)
-{
-  single_enable = 1;
-  self_flag = 0;
-}
+PairCoulDampSF::PairCoulDampSF(LAMMPS *lmp) : Pair(lmp) {}
 
 /* ---------------------------------------------------------------------- */
 
 PairCoulDampSF::~PairCoulDampSF()
 {
-  if (!copymode)
-    if (allocated)
-      memory->destroy(setflag);
+  if (copymode) return;
+
+  if (allocated) {
+    memory->destroy(setflag);
+    memory->destroy(cutsq);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -47,11 +54,11 @@ PairCoulDampSF::~PairCoulDampSF()
 void PairCoulDampSF::compute(int eflag, int vflag)
 {
   int i,j,ii,jj,inum,jnum,itype,jtype,intra;
-  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,vr,fr,evdwl,ecoul,fpair;
-  double r,rsq,r2inv,r6inv,forcelj,prefactor,forcecoul,factor_lj,factor_coul;
+  double qtmp,xtmp,ytmp,ztmp,delx,dely,delz,vr,fr,ecoul,fpair;
+  double r,rsq,r2inv,prefactor,forcecoul,factor_coul;
   int *ilist,*jlist,*numneigh,**firstneigh;
 
-  evdwl = ecoul = 0.0;
+  ecoul = 0.0;
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = vflag_fdotr = 0;
 
@@ -90,7 +97,6 @@ void PairCoulDampSF::compute(int eflag, int vflag)
     for (jj = 0; jj < jnum; jj++) {
       j = jlist[jj];
       intra = sbmask(j);
-      factor_lj = special_lj[intra];
       factor_coul = special_coul[intra];
       j &= NEIGHMASK;
 
@@ -126,7 +132,7 @@ void PairCoulDampSF::compute(int eflag, int vflag)
           ecoul = intra ? forcecoul : prefactor*(vr + r*f_shift - e_shift);
 
         if (evflag) ev_tally(i,j,nlocal,newton_pair,
-                             evdwl,ecoul,fpair,delx,dely,delz);
+                             0.0,ecoul,fpair,delx,dely,delz);
       }
     }
   }
@@ -147,6 +153,8 @@ void PairCoulDampSF::allocate()
   for (int i = 1; i <= n; i++)
     for (int j = i; j <= n; j++)
       setflag[i][j] = 0;
+
+  memory->create(cutsq,n+1,n+1,"pair:cutsq");
 }
 
 /* ----------------------------------------------------------------------
@@ -155,7 +163,7 @@ void PairCoulDampSF::allocate()
 
 void PairCoulDampSF::settings(int narg, char **arg)
 {
-  if (narg < 2) error->all(FLERR,"Illegal pair_style command");
+  if (narg != 2) error->all(FLERR,"Illegal pair_style command");
 
   alpha = force->numeric(FLERR,arg[0]);
   cut_coul = force->numeric(FLERR,arg[1]);
@@ -192,14 +200,15 @@ void PairCoulDampSF::coeff(int narg, char **arg)
 void PairCoulDampSF::init_style()
 {
   if (!atom->q_flag)
-    error->all(FLERR,"Pair style coul/damp/sf requires atom charges");
+    error->all(FLERR,"Pair style coul/dsf requires atom attribute q");
 
   neighbor->request(this,instance_me);
 
   cut_coulsq = cut_coul * cut_coul;
-  unshifted( cut_coul, e_shift, f_shift );
-  e_shift += f_shift*cut_coul;
-  e_self = -(e_shift/2.0 + alpha/sqrt(MY_PI))*force->qqrd2e;
+  double erfcc = erfc(alpha*cut_coul);
+  double erfcd = exp(-alpha*alpha*cut_coul*cut_coul);
+  f_shift = -(erfcc/cut_coulsq + 2.0/MY_PIS*alpha*erfcd/cut_coul);
+  e_shift = erfcc/cut_coul - f_shift*cut_coul;
 }
 
 /* ----------------------------------------------------------------------
@@ -209,40 +218,6 @@ void PairCoulDampSF::init_style()
 double PairCoulDampSF::init_one(int i, int j)
 {
   return cut_coul;
-}
-
-/* ---------------------------------------------------------------------- */
-
-void PairCoulDampSF::modify_params(int narg, char **arg)
-{
-  if (narg == 0)
-    error->all(FLERR,"Illegal pair_modify command");
-
-  int iarg, ns, skip[narg];
-  iarg = ns = 0;
-  while (iarg < narg) {
-    if (strcmp(arg[iarg],"self") == 0) {
-      if (iarg+2 > narg)
-        error->all(FLERR,"Illegal pair_modify command");
-      if (strcmp(arg[iarg+1],"yes") == 0)
-        self_flag = 1;
-      else if (strcmp(arg[iarg+1],"no") == 0)
-        self_flag = 0;
-      else
-        error->all(FLERR,"Illegal pair_modify command");
-      single_enable = !self_flag;
-      iarg += 2;
-    }
-    else // no keyword found - skip argument:
-      skip[ns++] = iarg++;
-  }
-
-  // Call parent-class routine with skipped arguments:
-  if (ns > 0) {
-    for (int i = 0; i < ns; i++)
-      arg[i] = arg[skip[i]];
-    Pair::modify_params(ns, arg);
-  }
 }
 
 /* ----------------------------------------------------------------------
@@ -255,8 +230,9 @@ void PairCoulDampSF::write_restart(FILE *fp)
 
   int i,j;
   for (i = 1; i <= atom->ntypes; i++)
-    for (j = i; j <= atom->ntypes; j++)
+    for (j = i; j <= atom->ntypes; j++) {
       fwrite(&setflag[i][j],sizeof(int),1,fp);
+    }
 }
 
 /* ----------------------------------------------------------------------
@@ -285,7 +261,8 @@ void PairCoulDampSF::write_restart_settings(FILE *fp)
 {
   fwrite(&alpha,sizeof(double),1,fp);
   fwrite(&cut_coul,sizeof(double),1,fp);
-  fwrite(&self_flag,sizeof(int),1,fp);
+  fwrite(&offset_flag,sizeof(int),1,fp);
+  fwrite(&mix_flag,sizeof(int),1,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -297,18 +274,20 @@ void PairCoulDampSF::read_restart_settings(FILE *fp)
   if (comm->me == 0) {
     fread(&alpha,sizeof(double),1,fp);
     fread(&cut_coul,sizeof(double),1,fp);
-    fread(&self_flag,sizeof(int),1,fp);
+    fread(&offset_flag,sizeof(int),1,fp);
+    fread(&mix_flag,sizeof(int),1,fp);
   }
   MPI_Bcast(&alpha,1,MPI_DOUBLE,0,world);
   MPI_Bcast(&cut_coul,1,MPI_DOUBLE,0,world);
-  MPI_Bcast(&self_flag,1,MPI_INT,0,world);
+  MPI_Bcast(&offset_flag,1,MPI_INT,0,world);
+  MPI_Bcast(&mix_flag,1,MPI_INT,0,world);
 }
 
 /* ---------------------------------------------------------------------- */
 
 double PairCoulDampSF::single(int i, int j, int itype, int jtype, double rsq,
-                                double factor_coul, double factor_lj,
-                                double &fforce)
+                           double factor_coul, double factor_lj,
+                           double &fforce)
 {
   double r2inv,r6inv,r,vr,fr,prefactor;
 
@@ -339,4 +318,3 @@ void *PairCoulDampSF::extract(const char *str, int &dim)
   }
   return NULL;
 }
-
