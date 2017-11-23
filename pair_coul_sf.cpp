@@ -163,7 +163,7 @@ void PairCoulSF::allocate()
 
 void PairCoulSF::settings(int narg, char **arg)
 {
-  if (narg != 2) error->all(FLERR,"Illegal pair_style command");
+  if (narg != 1) error->all(FLERR,"Illegal pair_style command");
 
   cut_coul = force->numeric(FLERR,arg[0]);
 }
