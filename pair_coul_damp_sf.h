@@ -41,7 +41,7 @@ class PairCoulDampSF : public Pair {
   void coeff(int, char **);
   virtual void init_style();
   virtual double init_one(int, int);
-//  void modify_params(int, char **);
+  void modify_params(int, char **);
   void write_restart(FILE *);
   void read_restart(FILE *);
   void write_restart_settings(FILE *);

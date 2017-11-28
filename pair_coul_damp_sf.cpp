@@ -220,6 +220,40 @@ double PairCoulDampSF::init_one(int i, int j)
   return cut_coul;
 }
 
+/* ---------------------------------------------------------------------- */
+
+void PairCoulDampSF::modify_params(int narg, char **arg)
+{
+  if (narg == 0)
+    error->all(FLERR,"Illegal pair_modify command");
+
+  int iarg, ns, skip[narg];
+  iarg = ns = 0;
+  while (iarg < narg) {
+    if (strcmp(arg[iarg],"self") == 0) {
+      if (iarg+2 > narg)
+        error->all(FLERR,"Illegal pair_modify command");
+      if (strcmp(arg[iarg+1],"yes") == 0)
+        self_flag = 1;
+      else if (strcmp(arg[iarg+1],"no") == 0)
+        self_flag = 0;
+      else
+        error->all(FLERR,"Illegal pair_modify command");
+      single_enable = !self_flag;
+      iarg += 2;
+    }
+    else // no keyword found - skip argument:
+      skip[ns++] = iarg++;
+  }
+
+  // Call parent-class routine with skipped arguments:
+  if (ns > 0) {
+    for (int i = 0; i < ns; i++)
+      arg[i] = arg[skip[i]];
+    Pair::modify_params(ns, arg);
+  }
+}
+
 /* ----------------------------------------------------------------------
   proc 0 writes to restart file
 ------------------------------------------------------------------------- */
